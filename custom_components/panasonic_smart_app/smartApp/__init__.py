@@ -30,6 +30,7 @@ from .const import (
     DEHUMIDIFIER_COMMANDTYPES_PARAMETERS_XLATE_LOOKUP,
 )
 from .utils import chunks
+from ..model_type import command_has_list, model_types_match
 from . import urls
 
 _LOGGER = logging.getLogger(__name__)
@@ -76,7 +77,23 @@ class SmartApp(object):
         self._session = session
         self._devices = []
         self._commands = []
+        self._built_in_commands = []
         self.last_request_id = 0
+
+    async def async_load_builtin_commands(self, hass):
+        self._built_in_commands = await hass.async_add_executor_job(
+            self._load_builtin_commands
+        )
+
+    def _load_builtin_commands(self):
+        try:
+            current_dir = os.path.dirname(__file__)
+            file_path = os.path.join(current_dir, "..", "commands", "command_list.json")
+            with open(file_path, "r", encoding="utf-8") as file:
+                return json.load(file).get("CommandList", [])
+        except Exception as e:
+            _LOGGER.warning(f"Failed to load local commands: {e}")
+            return []
 
     async def login(self):
         _LOGGER.info("Attemping to login...")
@@ -151,20 +168,13 @@ class SmartApp(object):
         return self._devices
 
     def get_commands(self):
-
-        built_in_commands = []
-        try:
-            current_dir = os.path.dirname(__file__)
-            file_path = os.path.join(current_dir, "..", "commands", "command_list.json")
-            with open(file_path, "r", encoding="utf-8") as file:
-                built_in_commands = json.load(file).get("CommandList", [])
-        except Exception as e:
-            _LOGGER.warning(f"Failed to load local commands: {e}")
-
-        existing_model_types = {cmd.get("ModelType") for cmd in self._commands}
         filtered_built_in_commands = [
-            cmd for cmd in built_in_commands
-            if cmd.get("ModelType") not in existing_model_types
+            cmd for cmd in self._built_in_commands
+            if not any(
+                model_types_match(existing_cmd.get("ModelType"), cmd.get("ModelType"))
+                and command_has_list(existing_cmd)
+                for existing_cmd in self._commands
+            )
         ]
 
         return self._commands + filtered_built_in_commands

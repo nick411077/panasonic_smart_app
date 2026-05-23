@@ -1,10 +1,10 @@
 import logging
 from abc import ABC, abstractmethod
 
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.components.select import SelectEntity
 
 from .entity import PanasonicBaseEntity
+from .model_type import find_model_commands
 from .const import (
     DOMAIN,
     DEVICE_TYPE_AC,
@@ -39,11 +39,17 @@ async def async_setup_entry(hass, entry, async_add_entities) -> bool:
 
     for index, device in enumerate(devices):
         device_type = int(device.get("DeviceType"))
-        current_device_commands = [
-            command
-            for command in commands
-            if command["ModelType"] == device.get("ModelType")
-        ][0]["JSON"][0]["list"]
+        matching_commands = find_model_commands(commands, device.get("ModelType"))
+        if matching_commands:
+            current_device_commands = matching_commands[0]["JSON"][0]["list"]
+        else:
+            current_device_commands = []
+            _LOGGER.warning(
+                "No command metadata found for %s (ModelType: %s). "
+                "Some select entities may not be available.",
+                device.get("NickName", "unknown device"),
+                device.get("ModelType"),
+            )
         command_types = list(
             map(lambda c: c["CommandType"].lower(), current_device_commands)
         )
@@ -407,19 +413,23 @@ class PanasonoicRefrigeratorTemperatureSelectABC(PanasonicBaseEntity, SelectEnti
         the status.
         """
 
-    def _this_command(self) -> dict:
+    def _this_command(self) -> dict | None:
         """The corresponding command of this entity in Panasonic UserGetRegisteredGwList2 API."""
         for command in self.commands:
             if command["CommandType"] == self.command_type:
                 return command
 
-        raise HomeAssistantError(
-            f"Command not found in commands: {self.command_type} for {self.label}"
+        _LOGGER.warning(
+            "Command not found in commands: %s for %s",
+            self.command_type,
+            self.nickname,
         )
+        return None
 
     @property
     def label(self) -> str:
-        command_name = self._this_command()["CommandName"]
+        command = self._this_command()
+        command_name = command["CommandName"] if command else self.command_type
         return f"{self.nickname} {command_name}"
 
     @property
@@ -432,7 +442,11 @@ class PanasonoicRefrigeratorTemperatureSelectABC(PanasonicBaseEntity, SelectEnti
             _LOGGER.exception(f"Error while getting status for {self.label}")
             return None
 
-        for parameter in self._this_command()["Parameters"]:
+        command = self._this_command()
+        if command is None:
+            return None
+
+        for parameter in command["Parameters"]:
             if parameter[1] == value:
                 _LOGGER.debug(f"[{self.label}] current_option: {parameter[0]}")
                 return parameter[0]
@@ -442,16 +456,24 @@ class PanasonoicRefrigeratorTemperatureSelectABC(PanasonicBaseEntity, SelectEnti
 
     @property
     def options(self) -> list[str]:
+        command = self._this_command()
+        if command is None:
+            return []
+
         return [
             parameter[0]
-            for parameter in self._this_command()["Parameters"]
+            for parameter in command["Parameters"]
         ]
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
         _LOGGER.debug(f"[{self.label}] Set temperature to {option}")
 
-        for parameter in self._this_command()["Parameters"]:
+        command = self._this_command()
+        if command is None:
+            return
+
+        for parameter in command["Parameters"]:
             if parameter[0] == option:
                 await self.client.set_command(
                     deviceId=self.auth,
