@@ -3,6 +3,7 @@ from datetime import timedelta
 from homeassistant.components.number import NumberEntity
 
 from .entity import PanasonicBaseEntity
+from .model_type import find_model_commands
 from .const import (
     DOMAIN,
     DEVICE_TYPE_AC,
@@ -39,11 +40,7 @@ async def async_setup_entry(hass, entry, async_add_entities) -> bool:
 
     for index, device in enumerate(devices):
 
-        current_device_commands = [
-            command
-            for command in commands
-            if command["ModelType"] == device.get("ModelType")
-        ]
+        current_device_commands = find_model_commands(commands, device.get("ModelType"))
         device_type = int(device.get("DeviceType"))
 
         if device_type == DEVICE_TYPE_DEHUMIDIFIER:

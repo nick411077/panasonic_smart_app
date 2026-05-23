@@ -35,6 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     proxy = entry.options.get(CONF_PROXY, '')
     session = async_get_clientsession(hass)
     client = SmartApp(session, username, password, proxy)
+    await client.async_load_builtin_commands(hass)
 
     _LOGGER.info("\nLoading your Panasonic devices. This may takes few minutes to complete.\n")
     await client.login()

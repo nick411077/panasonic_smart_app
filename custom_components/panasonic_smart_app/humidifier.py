@@ -51,6 +51,16 @@ async def async_setup_entry(hass, entry, async_add_entities) -> bool:
 
 
 class PanasonicDehumidifier(PanasonicBaseEntity, HumidifierEntity):
+    def _mode_parameters(self) -> list:
+        matching_commands = list(
+            filter(lambda c: c["CommandType"] == "0x01", self.commands)
+        )
+        if not matching_commands:
+            _LOGGER.warning("[%s] Mode command metadata not found", self.label)
+            return []
+
+        return matching_commands[0]["Parameters"]
+
     @property
     def available(self) -> bool:
         status = self.coordinator.data[self.index]["status"]
@@ -78,21 +88,18 @@ class PanasonicDehumidifier(PanasonicBaseEntity, HumidifierEntity):
     @property
     def mode(self) -> str:
         status = self.coordinator.data[self.index]["status"]
-        raw_mode_list = list(
-            filter(lambda c: c["CommandType"] == "0x01", self.commands)
-        )[0]["Parameters"]
-        target_mode = list(
-            filter(lambda m: m[1] == int(status.get("0x01") or 0), raw_mode_list)
-        )[0]
-        _mode = target_mode[0] if len(target_mode) > 0 else ""
+        raw_mode_list = self._mode_parameters()
+        target_mode = next(
+            filter(lambda m: m[1] == int(status.get("0x01") or 0), raw_mode_list),
+            None,
+        )
+        _mode = target_mode[0] if target_mode else None
         _LOGGER.debug(f"[{self.label}] _mode: {_mode}")
         return _mode
 
     @property
     def available_modes(self) -> list:
-        raw_mode_list = list(
-            filter(lambda c: c["CommandType"] == "0x01", self.commands)
-        )[0]["Parameters"]
+        raw_mode_list = self._mode_parameters()
 
         def mode_extractor(mode):
             return mode[0]
@@ -123,10 +130,11 @@ class PanasonicDehumidifier(PanasonicBaseEntity, HumidifierEntity):
 
         _LOGGER.debug(f" [{self.label}] Set mode to {mode}")
 
-        raw_mode_list = list(
-            filter(lambda c: c["CommandType"] == "0x01", self.commands)
-        )[0]
-        mode_info = list(filter(lambda m: m[0] == mode, raw_mode_list["Parameters"]))[0]
+        raw_mode_list = self._mode_parameters()
+        mode_info = next(filter(lambda m: m[0] == mode, raw_mode_list), None)
+        if mode_info is None:
+            _LOGGER.error(f"Unknown mode {mode} for {self.label}")
+            return
 
         await self.client.set_command(self.auth, 129, int(mode_info[1]))
         await self.coordinator.async_request_refresh()

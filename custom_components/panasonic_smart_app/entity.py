@@ -1,9 +1,13 @@
 from abc import ABC, abstractmethod
+import logging
 
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
+from .model_type import find_model_commands
 from .smartApp import SmartApp
+
+_LOGGER = logging.getLogger(__package__)
 
 
 class PanasonicBaseEntity(CoordinatorEntity, ABC):
@@ -41,9 +45,15 @@ class PanasonicBaseEntity(CoordinatorEntity, ABC):
     def commands(self) -> list:
         command_list = self.client.get_commands()
         current_model_type = self.current_device_info["ModelType"]
-        commands = list(
-            filter(lambda c: c["ModelType"] == current_model_type, command_list)
-        )
+        commands = find_model_commands(command_list, current_model_type)
+
+        if not commands:
+            _LOGGER.warning(
+                "No command metadata found for %s (ModelType: %s)",
+                self.nickname,
+                current_model_type,
+            )
+            return []
 
         return commands[0]["JSON"][0]["list"]
 

@@ -5,6 +5,7 @@ from homeassistant.components.switch import SwitchEntity, SwitchDeviceClass
 from homeassistant.const import STATE_UNAVAILABLE
 
 from .entity import PanasonicBaseEntity
+from .model_type import find_model_commands
 from .const import (
     DOMAIN,
     DEVICE_TYPE_AC,
@@ -53,11 +54,17 @@ async def async_setup_entry(hass, entry, async_add_entities) -> bool:
 
     for index, device in enumerate(devices):
         device_type = int(device.get("DeviceType"))
-        current_device_commands = [
-            command
-            for command in commands
-            if command["ModelType"] == device.get("ModelType")
-        ][0]["JSON"][0]["list"]
+        matching_commands = find_model_commands(commands, device.get("ModelType"))
+        if matching_commands:
+            current_device_commands = matching_commands[0]["JSON"][0]["list"]
+        else:
+            current_device_commands = []
+            _LOGGER.warning(
+                "No command metadata found for %s (ModelType: %s). "
+                "Some switch entities may not be available.",
+                device.get("NickName", "unknown device"),
+                device.get("ModelType"),
+            )
         command_types = list(
             map(lambda c: c["CommandType"].lower(), current_device_commands)
         )

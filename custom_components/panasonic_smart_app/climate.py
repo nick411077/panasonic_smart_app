@@ -20,6 +20,8 @@ from .const import (
     CLIMATE_AVAILABLE_PRESET,
     CLIMATE_AVAILABLE_SWING_MODE,
     CLIMATE_AVAILABLE_FAN_MODE,
+    CLIMATE_MINIMUM_TEMPERATURE,
+    CLIMATE_MAXIMUM_TEMPERATURE,
     CLIMATE_TEMPERATURE_STEP,
     LABEL_CLIMATE,
     LABEL_ERV,
@@ -69,6 +71,20 @@ async def async_setup_entry(hass, entry, async_add_entities) -> bool:
 
 
 class PanasonicClimate(PanasonicBaseEntity, ClimateEntity):
+    def _command_parameters(self, command_type: str) -> list:
+        matching_commands = list(
+            filter(lambda c: c["CommandType"] == command_type, self.commands)
+        )
+        if not matching_commands:
+            _LOGGER.warning(
+                "[%s] Command metadata not found for %s; using fallback values",
+                self.label,
+                command_type,
+            )
+            return []
+
+        return matching_commands[0]["Parameters"]
+
     @property
     def available(self) -> bool:
         status = self.coordinator.data[self.index]["status"]
@@ -126,20 +142,30 @@ class PanasonicClimate(PanasonicBaseEntity, ClimateEntity):
 
     @property
     def hvac_modes(self) -> list:
-        raw_modes = list(filter(lambda c: c["CommandType"] == "0x01", self.commands))[
-            0
-        ]["Parameters"]
+        raw_modes = self._command_parameters("0x01")
+        if not raw_modes:
+            return [mode["key"] for mode in CLIMATE_AVAILABLE_MODE]
 
         def mode_extractor(mode):
-            mode_mapping = list(
+            mode_mapping = next(
                 filter(lambda m: m["mappingCode"] == mode[1], CLIMATE_AVAILABLE_MODE)
-            )[0]
+            )
             return mode_mapping["key"]
 
-        _hvac_modes = list(map(mode_extractor, raw_modes))
+        _hvac_modes = []
+        for raw_mode in raw_modes:
+            try:
+                _hvac_modes.append(mode_extractor(raw_mode))
+            except StopIteration:
+                _LOGGER.warning(
+                    "[%s] Unknown HVAC mode mapping: %s",
+                    self.label,
+                    raw_mode,
+                )
 
         """ Force adding off mode into list """
-        _hvac_modes.append(HVACMode.OFF)
+        if HVACMode.OFF not in _hvac_modes:
+            _hvac_modes.append(HVACMode.OFF)
 
         _LOGGER.debug(f"[{self.label}] hvac_modes: {_hvac_modes}")
 
@@ -189,9 +215,9 @@ class PanasonicClimate(PanasonicBaseEntity, ClimateEntity):
         _LOGGER.debug(f"[{self.label}] Set preset mode to: {preset_mode}")
 
         value = getKeyFromDict(CLIMATE_AVAILABLE_PRESET, preset_mode)
-        self.client.set_command(self.auth, 1, value)
+        await self.client.set_command(self.auth, 1, value)
         if not _is_on:
-            self.client.set_command(self.auth, 0, 1)
+            await self.client.set_command(self.auth, 0, 1)
 
         await self.coordinator.async_request_refresh()
 
@@ -259,12 +285,11 @@ class PanasonicClimate(PanasonicBaseEntity, ClimateEntity):
     @property
     def min_temp(self) -> int:
         """ Return the minimum temperature """
-        temperature_range = list(
-            filter(lambda c: c["CommandType"] == "0x03", self.commands)
-        )[0]["Parameters"]
-        minimum_temperature = list(filter(lambda t: t[0] == "Min", temperature_range))[
-            0
-        ][1]
+        temperature_range = self._command_parameters("0x03")
+        minimum_temperature = next(
+            (t[1] for t in temperature_range if t[0] == "Min"),
+            CLIMATE_MINIMUM_TEMPERATURE,
+        )
         _LOGGER.debug(f"[{self.label}] min_temp: {minimum_temperature}")
 
         return minimum_temperature
@@ -272,12 +297,11 @@ class PanasonicClimate(PanasonicBaseEntity, ClimateEntity):
     @property
     def max_temp(self) -> int:
         """ Return the maximum temperature """
-        temperature_range = list(
-            filter(lambda c: c["CommandType"] == "0x03", self.commands)
-        )[0]["Parameters"]
-        maximum_temperature = list(filter(lambda t: t[0] == "Max", temperature_range))[
-            0
-        ][1]
+        temperature_range = self._command_parameters("0x03")
+        maximum_temperature = next(
+            (t[1] for t in temperature_range if t[0] == "Max"),
+            CLIMATE_MAXIMUM_TEMPERATURE,
+        )
         _LOGGER.debug(f"[{self.label}] max_temp: {maximum_temperature}")
 
         return maximum_temperature
